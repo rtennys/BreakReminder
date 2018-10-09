@@ -9,11 +9,13 @@ namespace BreakReminder
     public sealed class BreakReminderService : IDisposable
     {
         private readonly SoundPlayer _alertSound = new SoundPlayer(@"c:\windows\media\alarm03.wav");
-        private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+        private CancellationTokenSource _mainLoopTokenSource;
+        private CancellationTokenSource _delayTokenSource;
+        private Func<DateTime, DateTime> _calculateNext = CalculateNextForThreeTimesHourly;
 
         public void Run()
         {
-            _cancellationTokenSource = new CancellationTokenSource();
+            _mainLoopTokenSource = new CancellationTokenSource();
 
             try
             {
@@ -23,12 +25,12 @@ namespace BreakReminder
                 Console.WriteLine($"{assemblyName.Name} {assemblyName.Version}");
 
                 Console.WriteLine();
-                Console.WriteLine("<Q>uit or <P>lay configured alert sound");
+                Console.WriteLine("<Q>uit, <P>lay configured alert sound, or <S>witch break frequency");
 
                 Console.WriteLine();
                 Console.WriteLine("Starting...");
 
-                Task.Factory.StartNew(ExecutionLoop, _cancellationTokenSource.Token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                Task.Factory.StartNew(ExecutionLoop, _mainLoopTokenSource.Token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
                 HandleKeyPresses();
 
                 Console.WriteLine();
@@ -37,8 +39,8 @@ namespace BreakReminder
             }
             finally
             {
-                var cts = _cancellationTokenSource;
-                _cancellationTokenSource = null;
+                var cts = _mainLoopTokenSource;
+                _mainLoopTokenSource = null;
                 using (cts)
                     cts.Cancel();
             }
@@ -55,13 +57,11 @@ namespace BreakReminder
             {
                 while (true)
                 {
-                    if (_cancellationTokenSource.IsCancellationRequested) break;
+                    if (_mainLoopTokenSource.IsCancellationRequested) break;
 
                     await Delay().ConfigureAwait(false);
 
-                    if (_cancellationTokenSource.IsCancellationRequested) break;
-
-                    _alertSound.Play();
+                    if (_mainLoopTokenSource.IsCancellationRequested) break;
                 }
             }
             catch (OperationCanceledException)
@@ -76,19 +76,33 @@ namespace BreakReminder
         private async Task Delay()
         {
             var now = DateTime.Now;
-            var topOfTheHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-            if (now.Minute >= 55)
-                topOfTheHour = topOfTheHour.AddHours(1);
+            var next = _calculateNext(now);
 
-            var next = now.Minute < 25 || now.Minute >= 55
-                ? topOfTheHour.AddMinutes(25)
-                : topOfTheHour.AddMinutes(55);
-
-            Console.SetCursorPosition(0, Console.CursorTop - 1);
+            Console.SetCursorPosition(0, 5);
+            Console.WriteLine($"Reminding {(_calculateNext == CalculateNextForTwiceHourly ? "twice" : "three times")} an hour".PadRight(Console.WindowWidth - 2, ' '));
+            Console.WriteLine();
             Console.WriteLine($"Next alert: {next:hh:mm tt}");
             Console.Title = $"{next:h:mm tt}";
 
-            await Task.Delay(next - now, _cancellationTokenSource.Token).ConfigureAwait(false);
+            using (_delayTokenSource = new CancellationTokenSource())
+            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_mainLoopTokenSource.Token, _delayTokenSource.Token))
+            {
+                try
+                {
+                    await Task.Delay(next - now, linkedCts.Token).ConfigureAwait(false);
+                    _alertSound.Play();
+                }
+                catch (OperationCanceledException)
+                {
+                    if (_mainLoopTokenSource.IsCancellationRequested) throw;
+                }
+                catch (AggregateException ex)
+                {
+                    ex.Handle(x => x is OperationCanceledException && !_mainLoopTokenSource.IsCancellationRequested);
+                }
+            }
+
+            _delayTokenSource = null;
         }
 
         private void HandleKeyPresses()
@@ -117,6 +131,10 @@ namespace BreakReminder
                         _alertSound.Play();
                         break;
 
+                    case ConsoleKey.S:
+                        Switch();
+                        break;
+
                     case ConsoleKey.Escape:
                     case ConsoleKey.C:
                     case ConsoleKey.Q:
@@ -124,6 +142,46 @@ namespace BreakReminder
                         return;
                 }
             }
+        }
+
+        private void Switch()
+        {
+            if (_calculateNext == CalculateNextForTwiceHourly)
+                _calculateNext = CalculateNextForThreeTimesHourly;
+            else
+                _calculateNext = CalculateNextForTwiceHourly;
+
+            _delayTokenSource?.Cancel();
+        }
+
+        private static DateTime CalculateNextForTwiceHourly(DateTime now)
+        {
+            var topOfTheHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
+
+            if (now.Minute >= 55)
+                topOfTheHour = topOfTheHour.AddHours(1);
+
+            var next = now.Minute < 25 || now.Minute >= 55
+                ? topOfTheHour.AddMinutes(25)
+                : topOfTheHour.AddMinutes(55);
+
+            return next;
+        }
+
+        private static DateTime CalculateNextForThreeTimesHourly(DateTime now)
+        {
+            var topOfTheHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
+
+            if (now.Minute >= 55)
+                topOfTheHour = topOfTheHour.AddHours(1);
+
+            if (now.Minute < 15 || now.Minute >= 55)
+                return topOfTheHour.AddMinutes(15);
+
+            if (now.Minute < 35)
+                return topOfTheHour.AddMinutes(35);
+
+            return topOfTheHour.AddMinutes(55);
         }
     }
 }
