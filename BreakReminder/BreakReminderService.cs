@@ -11,7 +11,7 @@ namespace BreakReminder
         private readonly SoundPlayer _alertSound = new SoundPlayer(@"c:\windows\media\alarm03.wav");
         private CancellationTokenSource _mainLoopTokenSource;
         private CancellationTokenSource _delayTokenSource;
-        private Func<DateTime, DateTime> _calculateNext = CalculateNextForThreeTimesHourly;
+        private int _breaksPerHour = 4;
 
         public void Run()
         {
@@ -76,12 +76,12 @@ namespace BreakReminder
         private async Task Delay()
         {
             var now = DateTime.Now;
-            var next = _calculateNext(now);
+            var next = CalculateNext(now);
 
             Console.SetCursorPosition(0, 5);
-            Console.WriteLine($"Reminding {(_calculateNext == CalculateNextForTwiceHourly ? "twice" : "three times")} an hour".PadRight(Console.WindowWidth - 2, ' '));
+            Console.WriteLine($"Breaks per hour: {_breaksPerHour}".PadRight(Console.WindowWidth - 2, ' '));
             Console.WriteLine();
-            Console.WriteLine($"Next alert: {next:hh:mm tt}");
+            Console.WriteLine($"Next break: {next:hh:mm tt}");
             Console.Title = $"{next:h:mm tt}";
 
             using (_delayTokenSource = new CancellationTokenSource())
@@ -146,42 +146,19 @@ namespace BreakReminder
 
         private void Switch()
         {
-            if (_calculateNext == CalculateNextForTwiceHourly)
-                _calculateNext = CalculateNextForThreeTimesHourly;
-            else
-                _calculateNext = CalculateNextForTwiceHourly;
-
+            _breaksPerHour = _breaksPerHour % 4 + 1;
             _delayTokenSource?.Cancel();
         }
 
-        private static DateTime CalculateNextForTwiceHourly(DateTime now)
+        private DateTime CalculateNext(DateTime now)
         {
-            var topOfTheHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
+            var minutesBetweenBreaks = (int)Math.Floor(60 / (decimal)_breaksPerHour);
+            var nextBreak = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
 
-            if (now.Minute >= 55)
-                topOfTheHour = topOfTheHour.AddHours(1);
+            while (nextBreak < now)
+                nextBreak = nextBreak.AddMinutes(minutesBetweenBreaks);
 
-            var next = now.Minute < 25 || now.Minute >= 55
-                ? topOfTheHour.AddMinutes(25)
-                : topOfTheHour.AddMinutes(55);
-
-            return next;
-        }
-
-        private static DateTime CalculateNextForThreeTimesHourly(DateTime now)
-        {
-            var topOfTheHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-
-            if (now.Minute >= 55)
-                topOfTheHour = topOfTheHour.AddHours(1);
-
-            if (now.Minute < 15 || now.Minute >= 55)
-                return topOfTheHour.AddMinutes(15);
-
-            if (now.Minute < 35)
-                return topOfTheHour.AddMinutes(35);
-
-            return topOfTheHour.AddMinutes(55);
+            return nextBreak;
         }
     }
 }
