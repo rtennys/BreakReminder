@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Threading;
 using Newtonsoft.Json;
 
 namespace BreakReminder
@@ -10,7 +11,7 @@ namespace BreakReminder
     {
         private const string _dbFileName = "BreakReminder.txt";
 
-        public static T GetValue<T>(string key, T defaultValue = default(T))
+        public static T GetValue<T>(string key, T defaultValue = default)
         {
             var db = GetDb();
 
@@ -38,6 +39,7 @@ namespace BreakReminder
             db[key] = GetConverter<T>().ConvertToString(value);
 
             File.WriteAllText(_dbFileName, JsonConvert.SerializeObject(db, Formatting.Indented));
+            Thread.Sleep(500);
         }
 
         private static IDictionary<string, string> GetDb()

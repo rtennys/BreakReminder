@@ -12,6 +12,7 @@ namespace BreakReminder
         private CancellationTokenSource _mainLoopTokenSource;
         private CancellationTokenSource _delayTokenSource;
         private int? _breaksPerHour;
+        private int? _breakLength;
 
         public void Run()
         {
@@ -19,13 +20,13 @@ namespace BreakReminder
 
             try
             {
-                var assemblyName = Assembly.GetEntryAssembly().GetName();
+                var assemblyName = Assembly.GetEntryAssembly()?.GetName() ?? throw new Exception("Assembly.GetEntryAssembly returned null.  I didn't even know that was possible!");
 
                 Console.WriteLine();
                 Console.WriteLine($"{assemblyName.Name} {assemblyName.Version}");
 
                 Console.WriteLine();
-                Console.WriteLine("<Q>uit, <P>lay configured alert sound, or <S>witch break frequency");
+                Console.WriteLine("<Q>uit, <P>lay configured alert sound, <S>witch break frequency, or <C>hange break length");
 
                 Console.WriteLine();
                 Console.WriteLine("Starting...");
@@ -59,7 +60,7 @@ namespace BreakReminder
                 {
                     if (_mainLoopTokenSource.IsCancellationRequested) break;
 
-                    await Delay().ConfigureAwait(false);
+                    await Delay();
 
                     if (_mainLoopTokenSource.IsCancellationRequested) break;
                 }
@@ -71,6 +72,9 @@ namespace BreakReminder
             {
                 ex.Handle(x => x is OperationCanceledException);
             }
+
+            Console.SetCursorPosition(0, 5);
+            Console.WriteLine("Exiting...");
         }
 
         private async Task Delay()
@@ -84,22 +88,21 @@ namespace BreakReminder
             Console.WriteLine($"Next break: {next:hh:mm tt}");
             Console.Title = $"{next:h:mm tt}";
 
-            using (_delayTokenSource = new CancellationTokenSource())
-            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_mainLoopTokenSource.Token, _delayTokenSource.Token))
+            _delayTokenSource = new CancellationTokenSource();
+            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_mainLoopTokenSource.Token, _delayTokenSource.Token);
+
+            try
             {
-                try
-                {
-                    await Task.Delay(next - now, linkedCts.Token).ConfigureAwait(false);
-                    _alertSound.Play();
-                }
-                catch (OperationCanceledException)
-                {
-                    if (_mainLoopTokenSource.IsCancellationRequested) throw;
-                }
-                catch (AggregateException ex)
-                {
-                    ex.Handle(x => x is OperationCanceledException && !_mainLoopTokenSource.IsCancellationRequested);
-                }
+                await Task.Delay(next - now, linkedCts.Token);
+                _alertSound.Play();
+            }
+            catch (OperationCanceledException)
+            {
+                if (_mainLoopTokenSource.IsCancellationRequested) throw;
+            }
+            catch (AggregateException ex)
+            {
+                ex.Handle(x => x is OperationCanceledException && !_mainLoopTokenSource.IsCancellationRequested);
             }
 
             _delayTokenSource = null;
@@ -111,22 +114,6 @@ namespace BreakReminder
             {
                 switch (Console.ReadKey(true).Key)
                 {
-                    case ConsoleKey.A:
-                        SystemSounds.Asterisk.Play();
-                        break;
-
-                    case ConsoleKey.B:
-                        SystemSounds.Beep.Play();
-                        break;
-
-                    case ConsoleKey.E:
-                        SystemSounds.Exclamation.Play();
-                        break;
-
-                    case ConsoleKey.H:
-                        SystemSounds.Hand.Play();
-                        break;
-
                     case ConsoleKey.P:
                         _alertSound.Play();
                         break;
@@ -135,8 +122,11 @@ namespace BreakReminder
                         Switch();
                         break;
 
-                    case ConsoleKey.Escape:
                     case ConsoleKey.C:
+                        Change();
+                        break;
+
+                    case ConsoleKey.Escape:
                     case ConsoleKey.Q:
                     case ConsoleKey.X:
                         return;
@@ -144,11 +134,21 @@ namespace BreakReminder
             }
         }
 
+        private void Change()
+        {
+            _breakLength += 5;
+            if (_breakLength > 15)
+                _breakLength = 0;
+
+            Db.SetValue("BreakLength", _breakLength);
+            _delayTokenSource.Cancel();
+        }
+
         private void Switch()
         {
             _breaksPerHour = _breaksPerHour % 4 + 1;
             Db.SetValue("BreaksPerHour", _breaksPerHour);
-            _delayTokenSource?.Cancel();
+            _delayTokenSource.Cancel();
         }
 
         private DateTime CalculateNext(DateTime now)
@@ -161,6 +161,12 @@ namespace BreakReminder
 
             while (nextBreak < now)
                 nextBreak = nextBreak.AddMinutes(minutesBetweenBreaks);
+
+            if (_breakLength == null)
+                _breakLength = Db.GetValue("BreakLength", 10);
+
+            if (_breakLength > 0)
+                nextBreak = nextBreak.AddMinutes(-_breakLength.Value);
 
             return nextBreak;
         }
