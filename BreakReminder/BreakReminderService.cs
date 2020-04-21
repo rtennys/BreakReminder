@@ -8,11 +8,17 @@ namespace BreakReminder
 {
     public sealed class BreakReminderService : IDisposable
     {
+        public BreakReminderService()
+        {
+            _breaksPerHour = new Lazy<int>(() => Db.GetValue("BreaksPerHour", 1));
+            _breakLength = new Lazy<int>(() => Db.GetValue("BreakLength", 10));
+        }
+
         private readonly SoundPlayer _alertSound = new SoundPlayer(@"c:\windows\media\alarm03.wav");
         private CancellationTokenSource _mainLoopTokenSource;
         private CancellationTokenSource _delayTokenSource;
-        private int? _breaksPerHour;
-        private int? _breakLength;
+        private Lazy<int> _breaksPerHour;
+        private Lazy<int> _breakLength;
 
         public void Run()
         {
@@ -58,11 +64,9 @@ namespace BreakReminder
             {
                 while (true)
                 {
-                    if (_mainLoopTokenSource.IsCancellationRequested) break;
-
-                    await Delay();
-
-                    if (_mainLoopTokenSource.IsCancellationRequested) break;
+                    _delayTokenSource = new CancellationTokenSource();
+                    System.Diagnostics.Debug.WriteLine($"IsCancellationRequested: {_delayTokenSource.Token.IsCancellationRequested}");
+                    await Delay(_delayTokenSource.Token);
                 }
             }
             catch (OperationCanceledException)
@@ -72,40 +76,31 @@ namespace BreakReminder
             {
                 ex.Handle(x => x is OperationCanceledException);
             }
-
-            Console.SetCursorPosition(0, 5);
-            Console.WriteLine("Exiting...");
         }
 
-        private async Task Delay()
+        private async Task Delay(CancellationToken token)
         {
             var now = DateTime.Now;
             var next = CalculateNext(now);
 
             Console.SetCursorPosition(0, 5);
-            Console.WriteLine($"Breaks per hour: {_breaksPerHour}".PadRight(Console.WindowWidth - 2, ' '));
+            Console.WriteLine($"Breaks per hour: {_breaksPerHour}, break length: {_breakLength}".PadRight(Console.WindowWidth - 2, ' '));
             Console.WriteLine();
             Console.WriteLine($"Next break: {next:hh:mm tt}");
             Console.Title = $"{next:h:mm tt}";
 
-            _delayTokenSource = new CancellationTokenSource();
-            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_mainLoopTokenSource.Token, _delayTokenSource.Token);
-
             try
             {
-                await Task.Delay(next - now, linkedCts.Token);
+                await Task.Delay(next - now, token);
                 _alertSound.Play();
             }
             catch (OperationCanceledException)
             {
-                if (_mainLoopTokenSource.IsCancellationRequested) throw;
             }
             catch (AggregateException ex)
             {
-                ex.Handle(x => x is OperationCanceledException && !_mainLoopTokenSource.IsCancellationRequested);
+                ex.Handle(x => x is OperationCanceledException);
             }
-
-            _delayTokenSource = null;
         }
 
         private void HandleKeyPresses()
@@ -136,37 +131,32 @@ namespace BreakReminder
 
         private void Change()
         {
-            _breakLength += 5;
-            if (_breakLength > 15)
-                _breakLength = 0;
+            var newBreakLength = (_breakLength.Value / 5 + 1) % 3 * 5; // 0, 5, or 10 minute breaks
+            _breakLength = new Lazy<int>(() => newBreakLength);
 
-            Db.SetValue("BreakLength", _breakLength);
+            Db.SetValue("BreakLength", _breakLength.Value);
             _delayTokenSource.Cancel();
         }
 
         private void Switch()
         {
-            _breaksPerHour = _breaksPerHour % 4 + 1;
-            Db.SetValue("BreaksPerHour", _breaksPerHour);
+            var newBreaksPerHour = _breaksPerHour.Value % 4 + 1;
+            _breaksPerHour = new Lazy<int>(() => newBreaksPerHour);
+
+            Db.SetValue("BreaksPerHour", _breaksPerHour.Value);
             _delayTokenSource.Cancel();
         }
 
         private DateTime CalculateNext(DateTime now)
         {
-            if (_breaksPerHour == null)
-                _breaksPerHour = Db.GetValue("BreaksPerHour", 4);
-
-            var minutesBetweenBreaks = (int)Math.Floor(60 / (decimal)_breaksPerHour);
             var nextBreak = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
 
+            if (_breakLength.Value > 0)
+                nextBreak = nextBreak.AddMinutes(-_breakLength.Value);
+
+            var minutesBetweenBreaks = (int)Math.Floor(60 / (decimal)_breaksPerHour.Value);
             while (nextBreak < now)
                 nextBreak = nextBreak.AddMinutes(minutesBetweenBreaks);
-
-            if (_breakLength == null)
-                _breakLength = Db.GetValue("BreakLength", 10);
-
-            if (_breakLength > 0)
-                nextBreak = nextBreak.AddMinutes(-_breakLength.Value);
 
             return nextBreak;
         }
