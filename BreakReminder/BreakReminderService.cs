@@ -11,7 +11,7 @@ namespace BreakReminder
         private readonly SoundPlayer _alertSound = new SoundPlayer(@"c:\windows\media\alarm03.wav");
         private CancellationTokenSource _mainLoopTokenSource;
         private CancellationTokenSource _delayTokenSource;
-        private int _breaksPerHour = 4;
+        private int? _breaksPerHour;
 
         public void Run()
         {
@@ -147,11 +147,15 @@ namespace BreakReminder
         private void Switch()
         {
             _breaksPerHour = _breaksPerHour % 4 + 1;
+            Db.SetValue("BreaksPerHour", _breaksPerHour);
             _delayTokenSource?.Cancel();
         }
 
         private DateTime CalculateNext(DateTime now)
         {
+            if (_breaksPerHour == null)
+                _breaksPerHour = Db.GetValue("BreaksPerHour", 4);
+
             var minutesBetweenBreaks = (int)Math.Floor(60 / (decimal)_breaksPerHour);
             var nextBreak = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
 
