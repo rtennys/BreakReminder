@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Media;
 using System.Reflection;
 using System.Threading;
@@ -65,7 +66,6 @@ namespace BreakReminder
                 while (true)
                 {
                     _delayTokenSource = new CancellationTokenSource();
-                    System.Diagnostics.Debug.WriteLine($"IsCancellationRequested: {_delayTokenSource.Token.IsCancellationRequested}");
                     await Delay(_delayTokenSource.Token);
                 }
             }
@@ -84,7 +84,8 @@ namespace BreakReminder
             var next = CalculateNext(now);
 
             Console.SetCursorPosition(0, 5);
-            Console.WriteLine($"Breaks per hour: {_breaksPerHour}, break length: {_breakLength}".PadRight(Console.WindowWidth - 2, ' '));
+            Console.WriteLine($"Breaks per hour: {Checkboxes(_breaksPerHour, 1, 2, 3, 4)}".PadRight(Console.WindowWidth - 2, ' '));
+            Console.WriteLine($"Break length:    {Checkboxes(_breakLength, 0, 5, 10)}".PadRight(Console.WindowWidth - 2, ' '));
             Console.WriteLine();
             Console.WriteLine($"Next break: {next:hh:mm tt}");
             Console.Title = $"{next:h:mm tt}";
@@ -100,6 +101,17 @@ namespace BreakReminder
             catch (AggregateException ex)
             {
                 ex.Handle(x => x is OperationCanceledException);
+            }
+
+            string Checkboxes(Lazy<int> actual, params int[] options)
+            {
+                return string.Join("  ", options.Select(x => Checkbox(x, actual).PadRight(6)));
+            }
+
+            string Checkbox(int expected, Lazy<int> actual)
+            {
+                var selection = actual.IsValueCreated && expected == actual.Value ? 'x' : ' ';
+                return $"({selection}) {expected}";
             }
         }
 

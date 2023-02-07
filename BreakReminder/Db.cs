@@ -27,13 +27,7 @@ namespace BreakReminder
 
         public static void SetValue<T>(string key, T value)
         {
-            var db = GetDb();
-
-            if ((db == null || !db.ContainsKey(key)) && Equals(value, default(T)))
-                return;
-
-            if (db == null)
-                db = new Dictionary<string, string>();
+            var db = GetDb() ?? new Dictionary<string, string>();
 
             db[key] = GetConverter<T>().ConvertToString(value);
 
